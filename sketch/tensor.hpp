@@ -37,12 +37,14 @@ class Tensor : public SketchBase<std::vector<double>, false> {
            size_t sketch_dim,
            size_t subsequence_len,
            uint32_t seed,
-           const std::string &name = "TS")
+           const std::string &name = "TS", 
+           bool use_optimal_hashes = false)
         : SketchBase<std::vector<double>, false>(name),
           alphabet_size(alphabet_size),
           sketch_dim(sketch_dim),
           subsequence_len(subsequence_len),
-          rng(seed) {
+          rng(seed), 
+          use_optimal_hashes(use_optimal_hashes) {
         init();
     }
 
@@ -54,10 +56,52 @@ class Tensor : public SketchBase<std::vector<double>, false> {
         std::uniform_int_distribution<seq_type> rand_bool(0, 1);
 
         for (size_t h = 0; h < subsequence_len; h++) {
+            //printf("H%ld: ", h);
             for (size_t c = 0; c < alphabet_size; c++) {
-                hashes[h][c] = rand_hash2(rng);
+                if ( use_optimal_hashes && subsequence_len == 1 ) {
+                    // Basically just 0,1,2,3 
+                    hashes[h][c] = c;
+                    // Signs are not important for subsequence_len == 1
+                }else if ( use_optimal_hashes && subsequence_len == 2 ) {
+                    // 	Spearman Corr.: 0.920324
+                    //	Spearman Corr.: 0.923774
+                    //	Spearman Corr.: 0.925123
+                    //	Spearman Corr.: 0.916339
+                    //	Spearman Corr.: 0.917641
+                    //	Spearman Corr.: 0.917641
+                    //	Spearman Corr.: 0.925328
+                    //	Spearman Corr.: 0.91792
+                    //	Spearman Corr.: 0.921629
+                    //hashes[0][0] = 4;
+                    //hashes[0][1] = 8;
+                    //hashes[0][2] = 0;
+                    //hashes[0][3] = 9;
+                    //hashes[1][0] = 2;
+                    //hashes[1][1] = 11;
+                    //hashes[1][2] = 1;
+                    //hashes[1][3] = 8;
+                    hashes[0][0] = 0;
+                    hashes[0][1] = 1;
+                    hashes[0][2] = 3;
+                    hashes[0][3] = 12;
+                    hashes[1][0] = 13;
+                    hashes[1][1] = 7;
+                    hashes[1][2] = 9;
+                    hashes[1][3] = 3;
+                    //TODO: Pick a good set of signs for this bin assignment
+                }else {
+                    // Otherwise set them randomly
+                    hashes[h][c] = rand_hash2(rng);
+                }
+                //printf("%d, ",  hashes[h][c]);
                 signs[h][c] = rand_bool(rng);
             }
+            //printf("\n");
+            //printf("S%ld: ", h);
+            //for (size_t c = 0; c < alphabet_size; c++) {
+            //    printf("%d, ",  signs[h][c] ? 1 : 0);
+            //}
+            //printf("\n");
         }
     }
 
@@ -98,9 +142,13 @@ class Tensor : public SketchBase<std::vector<double>, false> {
             }
         }
         std::vector<double> sketch(sketch_dim, 0);
+        printf("Sketch: ");
         for (uint32_t m = 0; m < sketch_dim; m++) {
             sketch[m] = Tp[subsequence_len][m] - Tm[subsequence_len][m];
+            printf("%f, ", sketch[m]);
         }
+        printf("\n");
+
 
         return sketch;
     }
@@ -147,6 +195,8 @@ class Tensor : public SketchBase<std::vector<double>, false> {
     Vec2D<bool> signs;
 
     std::mt19937 rng;
+
+    bool use_optimal_hashes;
 };
 
 } // namespace ts

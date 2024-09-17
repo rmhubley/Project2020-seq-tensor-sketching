@@ -20,7 +20,8 @@ class SeqGen {
            uint32_t group_size,
            double max_mutation_rate,
            double min_mutation_rate,
-           std::string phylogeny_shape)
+           std::string phylogeny_shape,
+           uint64_t seed = 0)
         : alphabet_size(alphabet_size),
           fix_len(fix_len),
           num_seqs(num_seqs),
@@ -28,8 +29,20 @@ class SeqGen {
           group_size(group_size),
           max_mutation_rate(max_mutation_rate),
           min_mutation_rate(min_mutation_rate),
-          phylogeny_shape(std::move(phylogeny_shape)) {
+          phylogeny_shape(std::move(phylogeny_shape)),
+          seed(seed) {
         assert(group_size >= 2 && "group size<=1 leads to completely independent sequences");
+
+        if ( seed == 0 ) {
+          // RMH: The original code used a fixed seed of 341234, which supports only
+          //      one set of random sequences (for reproducibility I assume).  I've
+          //      replaced this with the ability to set the seed or let it randomize
+          //      each time.  Seed value of 0 will be used as a flag to randomize.
+          //std::mt19937 gen = std::mt19937(341234);
+          std::random_device rd;
+          seed = rd();
+        }
+        gen = std::mt19937(seed);
     }
 
     /**
@@ -153,7 +166,9 @@ class SeqGen {
     void make_fix_len(std::vector<T> &seq) {
         std::uniform_int_distribution<T> rand_char(0, alphabet_size - 1);
         if (seq.size() > seq_len) {
-            seq = std::vector<T>(seq.begin(), seq.end());
+            // RMH: This appears to be a bug, as it doesn't actually truncate the sequence
+            //seq = std::vector<T>(seq.begin(), seq.end());
+            seq = std::vector<T>(seq.begin(), seq.end() - ( seq.size() - seq_len ));
         } else if (seq.size() < seq_len) {
             while (seq.size() < seq_len) {
                 seq.push_back(rand_char(gen));
@@ -178,8 +193,7 @@ class SeqGen {
 
 
   private:
-    std::mt19937 gen = std::mt19937(341234);
-
+    std::mt19937 gen;
     uint8_t alphabet_size;
     bool fix_len;
     uint32_t num_seqs;
@@ -188,6 +202,7 @@ class SeqGen {
     double max_mutation_rate;
     double min_mutation_rate;
     std::string phylogeny_shape;
+    uint64_t seed;
 };
 
 } // namespace ts

@@ -40,6 +40,20 @@ DEFINE_double(max_mutation_rate, 0.5, "Maximum rate of point mutation for sequen
 
 DEFINE_double(min_mutation_rate, 0.0, "Minimum rate of point mutation for sequence generation");
 
+// RMH: Restrict the method to TSS only
+DEFINE_bool(tss_only, false, "Run TSS only");
+
+// RMH: Allow control of sequence generation seeding
+DEFINE_uint64(seq_gen_seed, 0, "Seed for sequence generation [0: randomize]. Use 341234 to match original codebase");
+
+// RMH: Use an alternative slide method (to the original implementation) TODO: Explain
+DEFINE_bool(alt_slide_method, false, "Use the alternative slide method for Tensor Slide Sketch");
+
+// RMH: Set verbosity level for TSS method
+DEFINE_uint32(verbosity, 0, "Set the verbosity level for Tensor Slide Sketch");
+
+// RMH: Use precomputed optimal hashes for small tuple sizes 1,2
+DEFINE_bool(use_optimal_hashes, false, "For small tuple sizes, use precomputed optimal hashes. (currently t=1,t=2)");
 
 DEFINE_uint32(group_size, 2, "Number of sequences in each independent group");
 
@@ -146,6 +160,42 @@ void define_default_uint32(uint32_t &flag, uint32_t val) {
     if (flag == 0) {
         flag = val;
     }
+}
+
+// RMH: Calculate the coefficient of determination (R^2) of two vectors.
+double coefficient_of_determination(const std::vector<double>& observed, const std::vector<double>& predicted) {
+    if (observed.size() != predicted.size()) {
+        throw std::invalid_argument("Vectors observed and predicted must be of the same size.");
+    }
+
+    double sum_obs = 0.0;
+    double sum_obs_squared = 0.0;
+    for (const auto& value : observed) {
+        sum_obs += value;
+        sum_obs_squared += std::pow(value, 2);
+    }
+
+    double sum_pre = 0.0;
+    double sum_pre_squared = 0.0;
+    for (const auto& value : predicted) {
+        sum_pre += value;
+        sum_pre_squared += std::pow(value, 2);
+    }
+
+    auto it_observed = observed.begin();
+    auto it_predicted = predicted.begin();
+    double sum_obs_pre = 0.0;
+    for (; it_observed != observed.end() && it_predicted != predicted.end(); ++it_observed, ++it_predicted) {
+        sum_obs_pre += *it_observed * *it_predicted;
+    }
+
+    double SSxx = sum_obs_squared - ((std::pow(sum_obs, 2) / observed.size()));
+    double SSyy = sum_pre_squared - ((std::pow(sum_pre, 2) / predicted.size()));
+    double SSxy = sum_obs_pre - ((sum_obs * sum_pre) / observed.size());
+
+    double r = SSxy / std::sqrt(SSxx * SSyy);
+
+    return r;
 }
 
 void set_default_flags() {
@@ -283,6 +333,10 @@ class ExperimentRunner {
         auto spearman_coefficient = spearman(edit_dists, dists);
         std::cout << "\t"
                   << "Spearman Corr.: " << spearman_coefficient << std::endl;
+        // RMH: Add coefficient of determination
+        auto r_squared = coefficient_of_determination(edit_dists, dists);
+        std::cout << "\t"
+                  << "R-squared:      " << std::pow(r_squared,2) << std::endl;
 
         if (store_dist) {
             store_dist->resize(dists.size());
@@ -362,7 +416,7 @@ class ExperimentRunner {
     void generate_sequences() {
         ts::SeqGen seq_gen(FLAGS_alphabet_size, FLAGS_fix_len, FLAGS_num_seqs, FLAGS_seq_len,
                            FLAGS_group_size, FLAGS_max_mutation_rate, FLAGS_min_mutation_rate,
-                           FLAGS_phylogeny_shape);
+                           FLAGS_phylogeny_shape, FLAGS_seq_gen_seed);
 
         seqs = seq_gen.generate_seqs<char_type>();
         seq_gen.ingroup_pairs(ingroup_pairs);
@@ -407,6 +461,29 @@ class ExperimentRunner {
                 fo << "," << dist[pi];
             fo << "\n";
         }
+        // RMH: Oversight?
+        fo.close();
+
+        // RMH: Save the simulated sequences to a fasta file
+        fo.open(output_dir / "seqs.fa");
+        for (uint32_t si = 0; si < seqs.size(); si++) {
+          fo << ">seq_" << si << "\n";
+          for (uint32_t i = 0; i < seqs[si].size(); i++) {
+            const char c = seqs[si][i];
+            if ( c == 0 ) {
+              fo << "A";
+            } else if ( c == 1 ) {
+              fo << "C";
+            } else if ( c == 2 ) {
+              fo << "G";
+            } else if ( c == 3 ) {
+              fo << "T";
+            }
+          }
+          fo << "\n";
+        }
+        fo.close();
+
     }
 };
 
@@ -451,7 +528,8 @@ int main(int argc, char *argv[]) {
             TensorBlock<char_type>(FLAGS_alphabet_size, FLAGS_ts_dim, FLAGS_ts_tuple_length,
                                    FLAGS_block_size, rd(), "TSB"),
             TensorSlide<char_type>(FLAGS_alphabet_size, FLAGS_tss_dim, FLAGS_tss_tuple_length,
-                                   FLAGS_tss_window_size, FLAGS_tss_stride, rd(), "TSS"),
+                                   FLAGS_tss_window_size, FLAGS_tss_stride, rd(), "TSS",
+                                   FLAGS_alt_slide_method, FLAGS_use_optimal_hashes, FLAGS_verbosity),
             TensorSlideFlat<char_type, Int32Flattener>(
                     FLAGS_alphabet_size, FLAGS_tss_dim, FLAGS_tss_tuple_length,
                     FLAGS_tss_window_size, FLAGS_tss_stride,
@@ -462,7 +540,33 @@ int main(int argc, char *argv[]) {
                     FLAGS_tss_window_size, FLAGS_tss_stride,
                     DoubleFlattener(FLAGS_embed_dim, FLAGS_tss_dim, FLAGS_seq_len, rd()), rd(),
                     "TSS_flat_double"));
-    experiment.run();
+
+    // RMH: Add experimental function for TSS only
+    auto experiment_tss_only = MakeExperimentRunner<char_type, kmer_type>(
+             TensorSlide<char_type>(FLAGS_alphabet_size, FLAGS_tss_dim, FLAGS_tss_tuple_length,
+                                   FLAGS_tss_window_size, FLAGS_tss_stride, rd(), "TSS",
+                                   FLAGS_alt_slide_method, FLAGS_use_optimal_hashes, FLAGS_verbosity));
+
+    if ( FLAGS_tss_only ) {
+      // RMH: Log the details of the experiment
+      printf("Running: TSS with alphabet_size=%d, tss_dim=%d, tuple_length=%d, window_size=%d, stride=%d\n",
+                   FLAGS_alphabet_size, FLAGS_tss_dim, FLAGS_tss_tuple_length, FLAGS_tss_window_size,
+                   FLAGS_tss_stride);
+      if ( FLAGS_seq_gen_seed ) {
+        printf("Using fixed seed for sequence generation: %lu\n", FLAGS_seq_gen_seed);
+      }else{  
+        printf("Using random seed for sequence generation\n");
+      }
+      if ( FLAGS_alt_slide_method ) {
+        printf("Using alternative slide method for Tensor Slide Sketch\n");
+      }
+      if ( FLAGS_use_optimal_hashes ) {
+        printf("Using precomputed optimal hashes for small tuple sizes\n");
+      }
+      experiment_tss_only.run();
+    } else {
+      experiment.run();
+    }
 
     return 0;
 }

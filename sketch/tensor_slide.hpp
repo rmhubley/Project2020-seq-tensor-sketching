@@ -36,10 +36,17 @@ class TensorSlide : public Tensor<seq_type> {
                 size_t win_len,
                 size_t stride,
                 uint32_t seed,
-                const std::string &name = "TSS")
-        : Tensor<seq_type>(alphabet_size, sketch_dim, tup_len, seed, name),
+                const std::string &name = "TSS", 
+                bool alt_slide_method = false,
+                bool use_optimal_hashes = false,
+                size_t verbosity = 0)
+        : Tensor<seq_type>(alphabet_size, sketch_dim, tup_len, seed, name, use_optimal_hashes),
           win_len(win_len),
-          stride(stride) {
+          stride(stride),
+          alt_slide_method(alt_slide_method),
+          use_optimal_hashes(use_optimal_hashes),
+          verbosity(verbosity)
+    {
         assert(stride <= win_len && "Stride cannot be larger than the window length");
         assert(tup_len <= win_len && "Tuple length (t) cannot be larger than the window length");
     }
@@ -67,15 +74,22 @@ class TensorSlide : public Tensor<seq_type> {
             T1[p + 1][p][0] = 1;
         }
 
+        if ( verbosity > 0 )
+          printf("\n");
+
         // T[p][q] at step i represents the sketch for seq[i-w+1]...seq[i] when only using hash
         // functions 1<=p,p+1,...q<=t, where t is the sketch size
         for (uint32_t i = 0; i < seq.size(); i++) {
+            if ( verbosity > 0 ) 
+              printf("i=%d, seq[i] = %d\n", i, seq[i]);
             for (uint32_t p = 1; p <= tup_len; p++) {
                 // q-p must be smaller than i, hence the min in the condition
                 for (uint32_t q = std::min(p + i, (uint32_t)tup_len); q >= p; q--) {
                     double z = (double)(q - p + 1) / std::min(i + 1, win_len + 1);
                     auto r = hashes[q - 1][seq[i]];
                     bool s = signs[q - 1][seq[i]];
+                    if ( verbosity > 5 ) 
+                      printf("     p=%d, q=%d, r=%d, s=%d, z=%lf\n", p, q, r, s ? 1 : 0, z);
                     if (s) {
                         this->shift_sum_inplace(T1[p][q], T1[p][q - 1], r, z);
                         this->shift_sum_inplace(T2[p][q], T2[p][q - 1], r, z);
@@ -85,6 +99,8 @@ class TensorSlide : public Tensor<seq_type> {
                     }
                 }
             }
+            if ( verbosity > 5 )
+              printf("\n");
 
             if (i >= win_len) { // only start deleting from front after reaching #win_len
                 uint32_t ws = i - win_len; // the element to be removed from the sketch
@@ -106,16 +122,42 @@ class TensorSlide : public Tensor<seq_type> {
                 }
             }
 
-            if ((i + 1) % stride == 0) { // save a sketch every stride times
+            if ( alt_slide_method ) {
+              // RMH: The original method creates < win_len sketches at the start of the sketch.  It also
+              //      does not guarantee full coverage of the sequence.
+              int32_t win_start = i-win_len+1;
+              if ( win_start >= 0 && ( win_start % stride == 0 || i == seq.size()-1 )) {
+                if ( verbosity > 0 )
+                  printf("Pushing data (alt)\n");
                 sketches.push_back(diff(T1[1].back(), T2[1].back()));
+              }
+            } else { // Original
+              if ((i + 1) % stride == 0) { // save a sketch every stride times
+                if ( verbosity > 0 )
+                  printf("Pushing data\n");
+                sketches.push_back(diff(T1[1].back(), T2[1].back()));
+              }
             }
         }
+
+        if ( verbosity > 1 ) {
+          printf("Sketch:\n");
+          for (const auto& vec : sketches) {
+            for (double val : vec) {
+              printf("%lf, ", val);  // Use %lf for printing double values
+            }
+            printf("\n");
+          }
+        }
+
         return sketches;
     }
 
     double dist(const Vec2D<double> &a, const Vec2D<double> &b) {
         Timer timer("tensor_slide_sketch_dist");
-        return l2_dist2D_minlen(a, b);
+        //return l2_dist2D_minlen(a, b);
+        // RMH
+        return scalar_product_dist2D_minlen(a, b);
     }
 
 
@@ -131,6 +173,9 @@ class TensorSlide : public Tensor<seq_type> {
 
     uint32_t win_len;
     uint32_t stride;
+    bool alt_slide_method;
+    bool use_optimal_hashes;
+    uint32_t verbosity;
 };
 
 } // namespace ts

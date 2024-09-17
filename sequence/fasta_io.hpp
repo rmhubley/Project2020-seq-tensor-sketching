@@ -128,7 +128,19 @@ void write_fasta(const std::string &file_name, const Vec2D<seq_type> &sequences,
             if (Abc) {
                 fo << (char)(c + (int)'A');
             } else {
-                fo << c << ",";
+                // RMH: didn't write out decoded sequences A=0,C=1,G=2,T=3
+                if ( c == 0 ) {
+                  fo << 'A';
+                } else if ( c == 1 ) {
+                  fo << 'C';
+                } else if ( c == 2 ) {
+                  fo << 'G';
+                } else if ( c == 3 ) {
+                  fo << 'T';
+                } else {
+                  fo << 'N';
+                }
+                //fo << c << ",";
             }
         }
         fo << "\n\n";

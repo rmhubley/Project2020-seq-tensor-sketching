@@ -96,6 +96,33 @@ T l2_dist2D_minlen(const Vec2D<T> &a, const Vec2D<T> &b) {
     return val;
 }
 
+// RMH
+template <class T>
+T scalar_product_dist2D_minlen(const Vec2D<T> &a, const Vec2D<T> &b) {
+    auto len = std::min(a.size(), b.size());
+    T a_norm = 0;
+    T b_norm = 0;
+    for (size_t i = 0; i < len; i++) {
+        for (size_t j = 0; j < a[i].size() and j < b[i].size(); j++) {
+            auto el = (a[i][j] * a[i][j]);
+            a_norm += el;
+            el = (b[i][j] * b[i][j]);
+            b_norm += el;
+        }
+    }
+    a_norm = std::sqrt(a_norm);
+    b_norm = std::sqrt(b_norm);
+
+    T val = 0;
+    for (size_t i = 0; i < len; i++) {
+        for (size_t j = 0; j < a[i].size() and j < b[i].size(); j++) {
+            auto el = (a[i][j]/a_norm * b[i][j]/b_norm);
+            val += el;
+        }
+    }
+    return val;
+}
+
 
 template <class T>
 T hamming_dist(const std::vector<T> &a, const std::vector<T> &b) {

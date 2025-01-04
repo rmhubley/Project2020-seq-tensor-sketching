@@ -142,12 +142,12 @@ class Tensor : public SketchBase<std::vector<double>, false> {
             }
         }
         std::vector<double> sketch(sketch_dim, 0);
-        printf("Sketch: ");
+        //printf("Sketch: ");
         for (uint32_t m = 0; m < sketch_dim; m++) {
             sketch[m] = Tp[subsequence_len][m] - Tm[subsequence_len][m];
-            printf("%f, ", sketch[m]);
+            //printf("%f, ", sketch[m]);
         }
-        printf("\n");
+        //printf("\n");
 
 
         return sketch;

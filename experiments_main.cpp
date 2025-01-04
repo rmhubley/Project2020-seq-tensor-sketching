@@ -55,6 +55,12 @@ DEFINE_uint32(verbosity, 0, "Set the verbosity level for Tensor Slide Sketch");
 // RMH: Use precomputed optimal hashes for small tuple sizes 1,2
 DEFINE_bool(use_optimal_hashes, false, "For small tuple sizes, use precomputed optimal hashes. (currently t=1,t=2)");
 
+// RMH: Add flag to allow setting for GC background for sequence generation and mutation.
+DEFINE_double(gc_background, 0.5, "GC background for sequence generation and mutation");
+
+// RMH: Add flag for setting tandem repeat fraction in generated sequences.
+DEFINE_double(tandem_repeat_fraction, 0.0, "Fraction of tandem repeats in generated sequences");
+
 DEFINE_uint32(group_size, 2, "Number of sequences in each independent group");
 
 DEFINE_string(o, "/tmp", "Directory where the generated sequence should be written");
@@ -351,6 +357,20 @@ class ExperimentRunner {
 
     void run() {
         std::cout << "Generating sequences ..." << std::endl;
+
+        // RMH: Log the details of the sequence generation
+        if ( FLAGS_seq_gen_seed ) {
+          printf("  - Using fixed seed for sequence generation: %lu\n", FLAGS_seq_gen_seed);
+        }else{  
+          printf("  - Using random seed for sequence generation\n");
+        }
+        if ( FLAGS_gc_background != 0.5 ) {
+          printf("  - Using GC background for sequence generation/mutation: %f\n", FLAGS_gc_background);
+        }
+        if ( FLAGS_tandem_repeat_fraction != 0.0 ) {
+          printf("  - Generating random sequences with tandem repeat fraction: %f\n", FLAGS_tandem_repeat_fraction);
+        }
+
         generate_sequences();
         std::cout << "Computing edit distances ... ";
         compute_edit_distance();
@@ -416,7 +436,8 @@ class ExperimentRunner {
     void generate_sequences() {
         ts::SeqGen seq_gen(FLAGS_alphabet_size, FLAGS_fix_len, FLAGS_num_seqs, FLAGS_seq_len,
                            FLAGS_group_size, FLAGS_max_mutation_rate, FLAGS_min_mutation_rate,
-                           FLAGS_phylogeny_shape, FLAGS_seq_gen_seed);
+                           FLAGS_phylogeny_shape, FLAGS_seq_gen_seed, FLAGS_gc_background, 
+                           FLAGS_tandem_repeat_fraction);
 
         seqs = seq_gen.generate_seqs<char_type>();
         seq_gen.ingroup_pairs(ingroup_pairs);
@@ -512,7 +533,27 @@ int main(int argc, char *argv[]) {
         return random_device();
     };
 
-    auto experiment = MakeExperimentRunner<char_type, kmer_type>(
+    // RMH: Log the details of the TSS method
+    printf("TSS Parameters: alphabet_size=%d, tss_dim=%d, tuple_length=%d, window_size=%d, stride=%d\n",
+                 FLAGS_alphabet_size, FLAGS_tss_dim, FLAGS_tss_tuple_length, FLAGS_tss_window_size,
+                 FLAGS_tss_stride);
+    if ( FLAGS_alt_slide_method ) {
+      printf("  - Using alternative slide method for Tensor Slide Sketch\n");
+    }
+    if ( FLAGS_use_optimal_hashes ) {
+      printf("  - Using precomputed optimal hashes for small tuple sizes\n");
+    }
+ 
+    if ( FLAGS_tss_only ) {
+      // RMH: Add experimental function for TSS only
+      auto experiment = MakeExperimentRunner<char_type, kmer_type>(
+             TensorSlide<char_type>(FLAGS_alphabet_size, FLAGS_tss_dim, FLAGS_tss_tuple_length,
+                                   FLAGS_tss_window_size, FLAGS_tss_stride, rd(), "TSS",
+                                   FLAGS_alt_slide_method, FLAGS_use_optimal_hashes, FLAGS_verbosity));
+
+      experiment.run();
+    }else {
+       auto experiment = MakeExperimentRunner<char_type, kmer_type>(
             MinHash<kmer_type>(int_pow<uint32_t>(FLAGS_alphabet_size, FLAGS_mh_kmer_size),
                                FLAGS_mh_dim, parse_hash_algorithm(FLAGS_hash_alg), rd(), "MH",
                                FLAGS_mh_kmer_size),
@@ -540,33 +581,9 @@ int main(int argc, char *argv[]) {
                     FLAGS_tss_window_size, FLAGS_tss_stride,
                     DoubleFlattener(FLAGS_embed_dim, FLAGS_tss_dim, FLAGS_seq_len, rd()), rd(),
                     "TSS_flat_double"));
-
-    // RMH: Add experimental function for TSS only
-    auto experiment_tss_only = MakeExperimentRunner<char_type, kmer_type>(
-             TensorSlide<char_type>(FLAGS_alphabet_size, FLAGS_tss_dim, FLAGS_tss_tuple_length,
-                                   FLAGS_tss_window_size, FLAGS_tss_stride, rd(), "TSS",
-                                   FLAGS_alt_slide_method, FLAGS_use_optimal_hashes, FLAGS_verbosity));
-
-    if ( FLAGS_tss_only ) {
-      // RMH: Log the details of the experiment
-      printf("Running: TSS with alphabet_size=%d, tss_dim=%d, tuple_length=%d, window_size=%d, stride=%d\n",
-                   FLAGS_alphabet_size, FLAGS_tss_dim, FLAGS_tss_tuple_length, FLAGS_tss_window_size,
-                   FLAGS_tss_stride);
-      if ( FLAGS_seq_gen_seed ) {
-        printf("Using fixed seed for sequence generation: %lu\n", FLAGS_seq_gen_seed);
-      }else{  
-        printf("Using random seed for sequence generation\n");
-      }
-      if ( FLAGS_alt_slide_method ) {
-        printf("Using alternative slide method for Tensor Slide Sketch\n");
-      }
-      if ( FLAGS_use_optimal_hashes ) {
-        printf("Using precomputed optimal hashes for small tuple sizes\n");
-      }
-      experiment_tss_only.run();
-    } else {
       experiment.run();
     }
+
 
     return 0;
 }
